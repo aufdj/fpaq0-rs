@@ -1,6 +1,7 @@
 # fpaq0-rs
 
 fpaq0-rs is a rust version of the fpaq0 arithmetic encoder written by Matt Mahoney.<br>
+http://mattmahoney.net/dc/fpaq0.cpp<br>
 <br>
 To compress:<br>
 cargo run c \input.txt \output.bin<br>
