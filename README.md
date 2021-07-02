@@ -4,6 +4,6 @@ fpaq0-rs is a rust version of the fpaq0 arithmetic encoder written by Matt Mahon
 http://mattmahoney.net/dc/fpaq0.cpp<br>
 <br>
 To compress:<br>
-cargo run c \input.txt \output.bin<br>
+fpaq0.exe c \input.txt \output.bin<br>
 To decompress:<br>
-cargo run d \input.bin \output.txt<br>
+fpaq0.exe d \input.bin \output.txt<br>
