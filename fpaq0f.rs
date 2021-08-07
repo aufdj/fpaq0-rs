@@ -107,7 +107,7 @@ impl Predictor {
         }
     }
     fn p(&mut self) -> u32 { 
-        self.statemap.p(self.context * 256 + self.state[self.context] as usize) // next bit predicted based on context + state
+        self.statemap.p(self.context * 256 + self.state[self.context] as usize)
     } 
     fn update(&mut self, bit: i32) {
         self.statemap.update(bit);
