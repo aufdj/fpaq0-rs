@@ -83,7 +83,8 @@ impl StateMap {
         // updates context_map based on the difference between the predicted and actual bit
         #[allow(overflowing_literals)]
         let high_23_bit_mask: i32 = 0xFFFFFE00;
-        self.context_map[self.context] = self.context_map[self.context].wrapping_add((((bit << 18) - prediction) * self.recipr_table[count] & high_23_bit_mask) as u32);
+        self.context_map[self.context] = self.context_map[self.context].wrapping_add(
+        (((bit << 18) - prediction) * self.recipr_table[count] & high_23_bit_mask) as u32);
         
     }
 }
