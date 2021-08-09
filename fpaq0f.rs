@@ -164,8 +164,8 @@ impl Encoder {
         }
     }
     fn decode(&mut self) -> i32 {
-        let p: u32 = self.predictor.p();
         let mut byte = [0; 1];
+        let p: u32 = self.predictor.p();
         let mid: u32 = self.low + ((self.high - self.low) >> 16) * p + ((self.high - self.low & 0xFFFF) * p >> 16);
         let mut bit: i32 = 0;
         if self.x <= mid {
