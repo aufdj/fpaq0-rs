@@ -96,14 +96,14 @@ impl StateMap {
 struct Predictor {
     context:   usize,
     statemap:  StateMap,
-    state:     [u8; 65_536],
+    state:     [u8; 256],
 }
 impl Predictor {
     fn new() -> Predictor {
         Predictor {
             context:   0,
             statemap:  StateMap::new(),
-            state:     [0; 65_536],
+            state:     [0; 256],
         }
     }
     fn p(&mut self) -> u32 { 
