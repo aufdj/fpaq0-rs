@@ -152,7 +152,6 @@ fn main() {
             }   
             e.encode(1);
             e.flush(); 
-            
             let file_out_size = metadata(Path::new(&args[3])).unwrap().len();
             println!("Finished Compressing.");   
             println!("{} bytes -> {} bytes in {:.2?}", file_in_size, file_out_size, start_time.elapsed());    
@@ -170,12 +169,11 @@ fn main() {
                 write(&mut file_out, &decoded_byte.to_le_bytes()[0..1]);
             }
             file_out.flush().unwrap();
-
             let file_out_size = metadata(Path::new(&args[3])).unwrap().len();
             println!("Finished Decompressing.");  
             println!("{} bytes -> {} bytes in {:.2?}", file_in_size, file_out_size, start_time.elapsed());   
         }
-        _ => { println!("Enter 'c input output' to compress and 'd input output' to decompress") }
+        _ => { println!("Enter 'c input output' to compress and 'd input output' to decompress") } 
     } 
 }
 
