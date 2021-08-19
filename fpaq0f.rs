@@ -260,9 +260,7 @@ fn main() {
             println!("Finished Decompressing.");  
             println!("{} bytes -> {} bytes in {:.2?}", file_in_size, file_out_size, start_time.elapsed());   
         }
-        _ => {
-        println!("Enter 'c' to compress and 'd' to decompress")
-        }
+        _ => { println!("Enter 'c input output' to compress and 'd input output' to decompress") }
     } 
 }
 
