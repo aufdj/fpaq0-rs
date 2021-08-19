@@ -218,11 +218,11 @@ fn main() {
     let start_time = Instant::now();
     let args: Vec<String> = env::args().collect();
     // main() buffers
-    let mut file_in = BufReader::with_capacity(4096, File::open(&args[2]).unwrap());
+    let mut file_in  = BufReader::with_capacity(4096, File::open(&args[2]).unwrap());
     let mut file_out = BufWriter::with_capacity(4096, File::create(&args[3]).unwrap());
     // Encoder buffers
-    let e_file_in = BufReader::with_capacity(4096, File::open(&args[2]).unwrap());
-    let e_file_out = BufWriter::with_capacity(4096, File::create(&args[3]).unwrap());
+    let e_file_in  =   BufReader::with_capacity(4096, File::open(&args[2]).unwrap());
+    let e_file_out =   BufWriter::with_capacity(4096, File::create(&args[3]).unwrap());
     match (&args[1]).as_str() {
         "c" => {  
             let file_in_size = metadata(Path::new(&args[2])).unwrap().len();
