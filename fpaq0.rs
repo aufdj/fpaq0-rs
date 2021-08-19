@@ -59,8 +59,8 @@ struct Encoder {
     high:       u32,
     low:        u32,
     predictor:  Predictor,
-    file_in:     BufReader<File>,
-    file_out:    BufWriter<File>,
+    file_in:    BufReader<File>,
+    file_out:   BufWriter<File>,
     x:          u32,
     compress:   bool,
 }
