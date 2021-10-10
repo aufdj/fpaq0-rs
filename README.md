@@ -34,3 +34,15 @@ To decompress:<br>
 fpaq0-rs.exe d input output<br>
 
 [Benchmarks](https://sheet.zoho.com/sheet/open/1pcxk88776ef2c512445c948bee21dcbbdba5?sheet=Sheet1&range=A1)
+
+<hr>
+
+# fpaq0f-apm-rs
+fpaq0f-apm-rs is the same as fpaq0f but with the addition of 5 Adaptive Probability Maps, taken from the bbb compressor by Matt Mahoney.<br>
+<br>
+To compress:<br>
+fpaq0f-apm-rs.exe c input output<br>
+To decompress:<br>
+fpaq0f-apm-rs.exe d input output<br>
+
+[Benchmarks](https://sheet.zoho.com/sheet/open/1pcxk88776ef2c512445c948bee21dcbbdba5?sheet=Sheet1&range=A1)
