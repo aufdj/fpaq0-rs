@@ -129,7 +129,7 @@ impl Predictor {
     fn update(&mut self, bit: i32) {
         self.statemap.update(bit);
 
-        self.state[self.context] = STATE_TABLE[self.context][bit as usize];
+        self.state[self.context] = STATE_TABLE[self.state[self.context] as usize][bit as usize];
 
         self.context += self.context + bit as usize;
         if self.context >= 256 { self.context = 0; }
