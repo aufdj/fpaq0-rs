@@ -119,27 +119,27 @@ byte) and is averaged with 1/2 weight to the apm4 output.
 */
 // Adaptive Probability Map ----------------------------------------
 struct Apm {
-    stretcher:   Stretch,
-    pr_cxt:      usize,
-    num_cxts:    usize, 
-    pr_cxt_map:  Vec<u16>,
+    stretcher:  Stretch,
+    bin:        usize,    
+    num_cxts:   usize, 
+    bin_map:    Vec<u16>, // maps each bin to a squashed value
 }
 impl Apm {
     fn new(n: usize) -> Apm {
         let mut apm = Apm {  
-            stretcher:   Stretch::new(), 
-            pr_cxt:      0, // last pr, context
-            num_cxts:    n,
-            pr_cxt_map:  Vec::with_capacity(n * 33),
+            stretcher:  Stretch::new(), 
+            bin:        0, // last pr, context
+            num_cxts:   n,
+            bin_map:    Vec::with_capacity(n * 33),
         };
-        apm.pr_cxt_map.resize(n * 33, 0);
+        apm.bin_map.resize(n * 33, 0);
 
         for i in 0..apm.num_cxts {
             for j in 0usize..33 {
-                apm.pr_cxt_map[(i * 33) + j] = if i == 0 {
+                apm.bin_map[(i * 33) + j] = if i == 0 {
                     (squash(((j as i32) - 16) * 128) * 16) as u16
                 } else {
-                    apm.pr_cxt_map[j]
+                    apm.bin_map[j]
                 }
             }
         }
@@ -151,24 +151,26 @@ impl Apm {
         
         pr = self.stretcher.stretch(pr); // -2047 to 2047
         
+
         let interp_wght = pr & 127; // interpolation weight (33 points)
         
-        // each context has a corresponding set of 33 bins, and pr_cxt is 
+        // each context has a corresponding set of 33 bins, and bin is 
         // a specific bin within the set corresponding to the current context
-        self.pr_cxt = (((pr + 2048) >> 7) + ((cxt as i32) * 33)) as usize;
+        self.bin = (((pr + 2048) >> 7) + ((cxt as i32) * 33)) as usize;
 
-        (((self.pr_cxt_map[self.pr_cxt]     as i32) * (128 - interp_wght) ) + 
-        ( (self.pr_cxt_map[self.pr_cxt + 1] as i32) *        interp_wght) ) >> 11
+        (((self.bin_map[self.bin]     as i32) * (128 - interp_wght) ) + 
+        ( (self.bin_map[self.bin + 1] as i32) *        interp_wght) ) >> 11
+
     }
     fn update(&mut self, bit: i32, rate: i32) {
         assert!(bit == 0 || bit == 1 && rate > 0 && rate < 32);
         // g controls direction of update (bit = 1 - increase, bit = 0 - decrease)
         let g: i32 = (bit << 16) + (bit << rate) - bit - bit;
-        self.pr_cxt_map[self.pr_cxt] = ((self.pr_cxt_map[self.pr_cxt] as i32) + 
-                                  ((g - (self.pr_cxt_map[self.pr_cxt] as i32)) >> rate)) as u16;
+        self.bin_map[self.bin] = ((self.bin_map[self.bin] as i32) + 
+                            ((g - (self.bin_map[self.bin] as i32)) >> rate)) as u16;
 
-        self.pr_cxt_map[self.pr_cxt + 1] = ((self.pr_cxt_map[self.pr_cxt + 1] as i32) + 
-                                      ((g - (self.pr_cxt_map[self.pr_cxt + 1] as i32)) >> rate)) as u16;
+        self.bin_map[self.bin + 1] = ((self.bin_map[self.bin + 1] as i32) + 
+                                ((g - (self.bin_map[self.bin + 1] as i32)) >> rate)) as u16;
     }
 }
 // -----------------------------------------------------------------
@@ -256,14 +258,15 @@ impl Predictor {
 
         self.pr = self.statemap.p(bit, self.cxt * 256 + self.state[self.cxt] as usize);
         
-        self.pr = self.apm1.p(bit, self.pr,   self.cxt, 5 ) +
-                  self.apm2.p(bit, self.pr,   self.cxt, 9 ) + 1 >> 1;
+        self.pr = self.apm1.p(bit, self.pr,    self.cxt,  5 ) +
+                  self.apm2.p(bit, self.pr,    self.cxt,  9 ) + 1 >> 1;
         
-        self.pr = self.apm3.p(bit, self.pr,   self.cxt | (self.cxt4 << 8) & 0xFF00, 7 );
+        self.pr = self.apm3.p(bit, self.pr,    self.cxt | (self.cxt4 << 8) & 0xFF00,  7 );
         
-        self.pr = self.apm4.p(bit, self.pr,   self.cxt | (self.cxt4 & 0x1F00), 7 ) * 3 + self.pr + 2 >> 2;
-        self.pr = self.apm5.p(bit, self.pr, ((self.cxt as u32) ^ (((self.cxt4 as u32) & 0xFFFFFF).wrapping_mul(123456791)) >> 18) as usize, 
-                                                                               7 ) + self.pr + 1 >> 1;    
+        self.pr = self.apm4.p(bit, self.pr,    self.cxt | (self.cxt4 & 0x1F00),  7 ) * 3 + self.pr + 2 >> 2;
+        self.pr = self.apm5.p(bit, self.pr,  ( (self.cxt as u32) ^ (
+                                             ( (self.cxt4 as u32) & 0xFFFFFF ).wrapping_mul(123456791)
+                                                ) >> 18) as usize,               7 ) + self.pr + 1 >> 1;    
     }
 }
 // -----------------------------------------------------------------
@@ -400,5 +403,8 @@ fn main() {
         }
     } 
 }
+
+
+
 
 
