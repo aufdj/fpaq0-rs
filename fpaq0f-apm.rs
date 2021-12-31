@@ -1,3 +1,180 @@
+use std::{
+    fs::{File, metadata},
+    io::{Read, Write, BufReader, BufWriter, BufRead},
+    env,
+    time::Instant,
+    path::Path,
+};
+
+// Convenience functions for buffered I/O ---------------------------
+#[derive(PartialEq, Eq)]
+enum BufferState {
+    NotEmpty,
+    Empty,
+}
+
+trait BufferedRead {
+    fn read_byte(&mut self, input: &mut [u8; 1]) -> usize;
+    fn fill_buffer(&mut self) -> BufferState;
+}
+impl BufferedRead for BufReader<File> {
+    fn read_byte(&mut self, input: &mut [u8; 1]) -> usize {
+        let bytes_read = self.read(input).unwrap();
+        if self.buffer().is_empty() { 
+            self.consume(self.capacity()); 
+            self.fill_buf().unwrap();
+        }
+        bytes_read
+    }
+    fn fill_buffer(&mut self) -> BufferState {
+        self.consume(self.capacity());
+        match self.fill_buf() {
+            Ok(_)  => {},
+            Err(e) => { 
+                println!("Function fill_buffer failed."); 
+                println!("Error: {}", e);
+            },
+        }
+        if self.buffer().is_empty() { 
+            return BufferState::Empty; 
+        }
+        BufferState::NotEmpty
+    }
+}
+trait BufferedWrite {
+    fn write_byte(&mut self, output: u8);
+    fn flush_buffer(&mut self);
+}
+impl BufferedWrite for BufWriter<File> {
+    fn write_byte(&mut self, output: u8) {
+        match self.write(&[output]) {
+            Ok(_)  => {},
+            Err(e) => { 
+                println!("Function write_byte failed."); 
+                println!("Error: {}", e);
+            },
+        }
+        if self.buffer().len() >= self.capacity() { 
+            match self.flush() {
+                Ok(_)  => {},
+                Err(e) => { 
+                    println!("Function write_byte failed."); 
+                    println!("Error: {}", e);
+                },
+            } 
+        }
+    }
+    fn flush_buffer(&mut self) {
+        match self.flush() {
+            Ok(_)  => {},
+            Err(e) => { 
+                println!("Function flush_buffer failed."); 
+                println!("Error: {}", e);
+            },
+        }    
+    }
+}
+fn new_input_file(capacity: usize, file_name: &str) -> BufReader<File> {
+    BufReader::with_capacity(capacity, File::open(file_name).unwrap())
+}
+fn new_output_file(capacity: usize, file_name: &str) -> BufWriter<File> {
+    BufWriter::with_capacity(capacity, File::create(file_name).unwrap())
+}
+// ------------------------------------------------------------------
+
+// Logistic Functions ----------------------------------------------
+fn squash(d: i32) -> i32 {
+    const SQ_T: [i32; 33] = [
+    1,2,3,6,10,16,27,45,73,120,194,310,488,747,1101,
+    1546,2047,2549,2994,3348,3607,3785,3901,3975,4022,
+    4050,4068,4079,4085,4089,4092,4093,4094];
+    if d > 2047  { return 4095; }
+    if d < -2047 { return 0;    }
+    let i_w = d & 127;
+    let d = ((d >> 7) + 16) as usize;
+    (SQ_T[d] * (128 - i_w) + SQ_T[d+1] * i_w + 64) >> 7
+}
+struct Stretch {
+    stretch_table: [i16; 4096],
+}
+impl Stretch {
+    fn new() -> Stretch {
+        let mut s = Stretch {
+            stretch_table: [0; 4096],
+        };
+        let mut pi = 0;
+        for x in -2047..=2047 {
+            let i = squash(x);
+            for j in pi..=i {
+                s.stretch_table[j as usize] = x as i16;
+            }
+            pi = i + 1;
+        }
+        s.stretch_table[4095] = 2047;
+        s
+    }
+    fn stretch(&self, p: i32) -> i32 {
+        assert!(p < 4096);
+        self.stretch_table[p as usize] as i32
+    }
+}
+// -----------------------------------------------------------------
+
+
+// Adaptive Probability Map ----------------------------------------
+struct Apm {
+    s:         Stretch,
+    bin:       usize,    
+    num_cxts:  usize, 
+    bin_map:   Vec<u16>, // maps each bin to a squashed value
+}
+impl Apm {
+    fn new(n: usize) -> Apm {
+        let mut apm = Apm {  
+            s:         Stretch::new(), 
+            bin:       0, 
+            num_cxts:  n,
+            bin_map:   vec![0; n * 33],
+        };
+        for i in 0..apm.num_cxts {
+            for j in 0usize..33 {
+                apm.bin_map[(i * 33) + j] = if i == 0 {
+                    (squash(((j as i32) - 16) * 128) * 16) as u16
+                } else {
+                    apm.bin_map[j]
+                }
+            }
+        }
+        apm
+    }
+    fn p(&mut self, bit: i32, rate: i32, mut pr: i32, cxt: usize) -> i32 {
+        assert!(bit == 0 || bit == 1 && pr >= 0 && pr < 4096 && cxt < self.num_cxts);
+        self.update(bit, rate);
+        
+        pr = self.s.stretch(pr); // -2047 to 2047
+        let i_w = pr & 127; // Interpolation weight (33 points)
+        
+        self.bin = (((pr + 2048) >> 7) + ((cxt as i32) * 33)) as usize;
+
+        let a = self.bin_map[self.bin] as i32;
+        let b = self.bin_map[self.bin+1] as i32;
+        ((a * (128 - i_w)) + (b * i_w)) >> 11
+    }
+    fn update(&mut self, bit: i32, rate: i32) {
+        assert!(bit == 0 || bit == 1 && rate > 0 && rate < 32);
+        
+        // Controls direction of update (bit = 1 - increase, bit = 0 - decrease)
+        let g: i32 = (bit << 16) + (bit << rate) - bit - bit;
+
+        let a = self.bin_map[self.bin] as i32;
+        let b = self.bin_map[self.bin+1] as i32;
+        self.bin_map[self.bin]   = (a + ((g - a) >> rate)) as u16;
+        self.bin_map[self.bin+1] = (b + ((g - b) >> rate)) as u16;
+    }
+}
+// -----------------------------------------------------------------
+
+
 const STATE_TABLE: [[u8; 2]; 256] = [
 [  1,  2],[  3,  5],[  4,  6],[  7, 10],[  8, 12],[  9, 13],[ 11, 14], // 0
 [ 15, 19],[ 16, 23],[ 17, 24],[ 18, 25],[ 20, 27],[ 21, 28],[ 22, 29], // 7
@@ -36,210 +213,64 @@ const STATE_TABLE: [[u8; 2]; 256] = [
 [242,137],[138,243],[130,244],[245,135],[246,137],[138,247],[140,248], // 238
 [249,135],[250, 69],[ 80,251],[140,252],[249,135],[250, 69],[ 80,251], // 245
 [140,252],[  0,  0],[  0,  0],[  0,  0]];  // 252
-    
-use std::fs::File;
-use std::io::{Read, Write, BufReader, BufWriter, BufRead};
-use std::env;
-use std::fs::metadata;
-use std::time::Instant;
-use std::path::Path;
 
-// Convenience functions for buffered IO ---------------------------
-fn write(buf_out: &mut BufWriter<File>, output: &[u8]) {
-    buf_out.write(output).unwrap();
-    if buf_out.buffer().len() >= buf_out.capacity() { 
-        buf_out.flush().unwrap(); 
-    }
-}
-fn read(buf_in: &mut BufReader<File>, input: &mut [u8; 1]) -> usize {
-    let bytes_read = buf_in.read(input).unwrap();
-    if buf_in.buffer().len() <= 0 { 
-        buf_in.consume(buf_in.capacity()); 
-        buf_in.fill_buf().unwrap();
-    }
-    bytes_read
-}
-// -----------------------------------------------------------------
-
-// Logistic Functions ----------------------------------------------
-fn squash(mut d: i32) -> i32 {
-    const SQUASH_TABLE: [i32; 33] = [
-    1,2,3,6,10,16,27,45,73,120,194,310,488,747,1101,
-    1546,2047,2549,2994,3348,3607,3785,3901,3975,4022,
-    4050,4068,4079,4085,4089,4092,4093,4094];
-    if d > 2047 { return 4095; }
-    if d < -2047 { return 0; }
-    let w = d & 127;
-    d = (d >> 7) + 16;
-    (SQUASH_TABLE[d as usize] * (128 - w) + SQUASH_TABLE[(d + 1) as usize] * w + 64) >> 7
-}
-struct Stretch {
-    stretch_table: [i16; 4096],
-}
-impl Stretch {
-    fn new() -> Stretch {
-        let mut s = Stretch {
-            stretch_table: [0; 4096],
-        };
-        let mut pi = 0;
-        for x in -2047..=2047 {
-            let i = squash(x);
-            for j in pi..=i {
-                s.stretch_table[j as usize] = x as i16;
-            }
-            pi = i + 1;
-        }
-        s.stretch_table[4095] = 2047;
-        s
-    }
-    fn stretch(&self, p: i32) -> i32 {
-        assert!(p < 4096);
-        self.stretch_table[p as usize] as i32
-    }
-}
-// -----------------------------------------------------------------
-/*
-The output of the StateMap is passed through a series of 5 more adaptive tables, 
-(Adaptive Probability Maps, or Apm) each of which maps a context and the input 
-probability to an output probability.  The input probability is interpolated between
-33 bins on a nonlinear scale with smaller bins near 0 and 1.  After each prediction,
-the corresponding table entries on both sides of p are adjusted to improve the
-last prediction.
-
-apm1 and apm2 both take cxt (the preceding bits of the current byte) as additional 
-context, but one is fast adapting and the other is slow adapting. Their 
-outputs are averaged.
-
-apm3 is an order 1 context (previous byte and current partial byte).
-
-apm4 takes the current byte and the low 5 bits of the second byte back.
-
-apm5 takes a 14 bit hash of an order 3 context (last 3 bytes plus current partial
-byte) and is averaged with 1/2 weight to the apm4 output.
-*/
-// Adaptive Probability Map ----------------------------------------
-struct Apm {
-    stretcher:  Stretch,
-    bin:        usize,    
-    num_cxts:   usize, 
-    bin_map:    Vec<u16>, // maps each bin to a squashed value
-}
-impl Apm {
-    fn new(n: usize) -> Apm {
-        let mut apm = Apm {  
-            stretcher:  Stretch::new(), 
-            bin:        0, // last pr, context
-            num_cxts:   n,
-            bin_map:    Vec::with_capacity(n * 33),
-        };
-        apm.bin_map.resize(n * 33, 0);
-
-        for i in 0..apm.num_cxts {
-            for j in 0usize..33 {
-                apm.bin_map[(i * 33) + j] = if i == 0 {
-                    (squash(((j as i32) - 16) * 128) * 16) as u16
-                } else {
-                    apm.bin_map[j]
-                }
-            }
-        }
-        apm
-    }
-    fn p(&mut self, bit: i32, mut pr: i32, cxt: usize, rate: i32) -> i32 {
-        assert!(bit == 0 || bit == 1 && pr >= 0 && pr < 4096 && cxt < self.num_cxts);
-        self.update(bit, rate);
-        
-        pr = self.stretcher.stretch(pr); // -2047 to 2047
-        
-
-        let interp_wght = pr & 127; // interpolation weight (33 points)
-        
-        // each context has a corresponding set of 33 bins, and bin is 
-        // a specific bin within the set corresponding to the current context
-        self.bin = (((pr + 2048) >> 7) + ((cxt as i32) * 33)) as usize;
-
-        (((self.bin_map[self.bin]     as i32) * (128 - interp_wght) ) + 
-        ( (self.bin_map[self.bin + 1] as i32) *        interp_wght) ) >> 11
-
-    }
-    fn update(&mut self, bit: i32, rate: i32) {
-        assert!(bit == 0 || bit == 1 && rate > 0 && rate < 32);
-        // g controls direction of update (bit = 1 - increase, bit = 0 - decrease)
-        let g: i32 = (bit << 16) + (bit << rate) - bit - bit;
-        self.bin_map[self.bin] = ((self.bin_map[self.bin] as i32) + 
-                            ((g - (self.bin_map[self.bin] as i32)) >> rate)) as u16;
-
-        self.bin_map[self.bin + 1] = ((self.bin_map[self.bin + 1] as i32) + 
-                                ((g - (self.bin_map[self.bin + 1] as i32)) >> rate)) as u16;
-    }
-}
-// -----------------------------------------------------------------
-
-const N: usize = 65_536;  // number of contexts
-const LIMIT: usize = 127; // controls rate of adaptation (higher = slower) (0..512)
+#[allow(overflowing_literals)]
+const HI_23_MSK: i32 = 0xFFFFFE00;
+const LIMIT: usize = 127; // Controls rate of adaptation (higher = slower) (0..512)
 
 // StateMap --------------------------------------------------------
 struct StateMap {
-    cxt:           usize,         // context of last prediction
-    cxt_map:       Box<[u32; N]>, // maps a context to a prediction and a count (allocate on heap to avoid stack overflow)
-    recipr_table:  [i32; 512],    // controls the size of each adjustment to cxt_map
+    cxt:      usize,         
+    cxt_map:  Vec<u32>,   // Maps a context to a prediction and a count 
+    rec_t:    [i32; 512], // Controls adjustment to cxt_map
 }
 impl StateMap {
-    fn new() -> StateMap {
-        let mut statemap = StateMap { 
-            cxt:           0,
-            cxt_map:       Box::new([0; N]),
-            recipr_table:  [0; 512],
+    fn new(n: usize) -> StateMap {
+        let mut sm = StateMap { 
+            cxt:      0,
+            cxt_map:  vec![1 << 31; n],
+            rec_t:    [0; 512],
         };
-
-        for i in 0..N {
-            statemap.cxt_map[i] = 1 << 31;
+        for i in 0..512 { 
+            sm.rec_t[i] = (32_768 / (i + i + 5)) as i32; 
         }
-
-        if statemap.recipr_table[0] == 0 {
-            for i in 0..512 { 
-                statemap.recipr_table[i] = (32_768 / (i + i + 5)) as i32; 
-            }
-        }
-        statemap
+        sm
     }
-    fn p(&mut self, bit: i32, cx: usize) -> i32 {
+    fn p(&mut self, bit: i32, cxt: usize) -> i32 {
         assert!(bit == 0 || bit == 1);
-        self.update(bit);                      // update prediction for previous context
-        self.cxt = cx;
-        (self.cxt_map[self.cxt] >> 20) as i32  // output prediction for new context
+        self.update(bit);                      
+        self.cxt = cxt;
+        (self.cxt_map[self.cxt] >> 20) as i32  
     }
     fn update(&mut self, bit: i32) {
-        let count: usize = (self.cxt_map[self.cxt] & 511) as usize;  // low 9 bits
-        let prediction: i32 = (self.cxt_map[self.cxt] >> 14) as i32; // high 18 bits
+        let count = (self.cxt_map[self.cxt] & 511) as usize;  // Low 9 bits
+        let pr = (self.cxt_map[self.cxt] >> 14) as i32; // High 18 bits
 
         if count < LIMIT { self.cxt_map[self.cxt] += 1; }
 
-        // updates cxt_map based on the difference between the predicted and actual bit
-        #[allow(overflowing_literals)]
-        let high_23_bit_mask: i32 = 0xFFFFFE00;
+        // Updates cxt_map based on prediction error
         self.cxt_map[self.cxt] = self.cxt_map[self.cxt].wrapping_add(
-        (((bit << 18) - prediction) * self.recipr_table[count] & high_23_bit_mask) as u32); 
+        (((bit << 18) - pr) * self.rec_t[count] & HI_23_MSK) as u32); 
     }
 }
 // -----------------------------------------------------------------
 
 // Predictor -------------------------------------------------------
 struct Predictor {
-    cxt:        usize,      apm1: Apm,   
-    cxt4:       usize,      apm2: Apm,   
-    pr:         i32,        apm3: Apm,   
-    state:      [u8; 256],  apm4: Apm,
-    statemap:   StateMap,   apm5: Apm,     
+    cxt:    usize,      apm1: Apm,   
+    cxt4:   usize,      apm2: Apm,   
+    pr:     i32,        apm3: Apm,   
+    state:  [u8; 256],  apm4: Apm,
+    sm:     StateMap,   apm5: Apm,     
 }
 impl Predictor {
     fn new() -> Predictor {
         Predictor {
-            cxt:       0,                apm1: Apm::new(256),
-            cxt4:      0,                apm2: Apm::new(256),
-            pr:        2048,             apm3: Apm::new(65536),
-            state:     [0; 256],         apm4: Apm::new(8192),
-            statemap:  StateMap::new(),  apm5: Apm::new(16384),         
+            cxt:    0,                    apm1: Apm::new(256),
+            cxt4:   0,                    apm2: Apm::new(256),
+            pr:     2048,                 apm3: Apm::new(65536),
+            state:  [0; 256],             apm4: Apm::new(8192),
+            sm:     StateMap::new(65536), apm5: Apm::new(16384),         
         }
     }
     fn p(&mut self) -> i32 { 
@@ -252,81 +283,108 @@ impl Predictor {
 
         self.cxt += self.cxt + bit as usize;
         if self.cxt >= 256 {
-            self.cxt4 = (self.cxt4 << 8) | (self.cxt - 256);  // shift new byte into cxt4
+            self.cxt4 = (self.cxt4 << 8) | (self.cxt - 256);  // Shift new byte into cxt4
             self.cxt = 0;
         }
 
-        self.pr = self.statemap.p(bit, self.cxt * 256 + self.state[self.cxt] as usize);
+        self.pr = self.sm.p(bit, self.state[self.cxt] as usize);
+
+        self.pr = self.apm1.p(bit, 5, self.pr, self.cxt) +
+                  self.apm2.p(bit, 9, self.pr, self.cxt) + 1 >> 1;
         
-        self.pr = self.apm1.p(bit, self.pr,    self.cxt,  5 ) +
-                  self.apm2.p(bit, self.pr,    self.cxt,  9 ) + 1 >> 1;
+        self.pr = self.apm3.p(bit, 7, self.pr, self.cxt | (self.cxt4 << 8) & 0xFF00);
         
-        self.pr = self.apm3.p(bit, self.pr,    self.cxt | (self.cxt4 << 8) & 0xFF00,  7 );
-        
-        self.pr = self.apm4.p(bit, self.pr,    self.cxt | (self.cxt4 & 0x1F00),  7 ) * 3 + self.pr + 2 >> 2;
-        self.pr = self.apm5.p(bit, self.pr,  ( (self.cxt as u32) ^ (
-                                             ( (self.cxt4 as u32) & 0xFFFFFF ).wrapping_mul(123456791)
-                                                ) >> 18) as usize,               7 ) + self.pr + 1 >> 1;    
-    }
+        self.pr = self.apm4.p(bit, 7, self.pr, self.cxt | (self.cxt4 & 0x1F00)) * 3 + self.pr + 2 >> 2;
+
+        self.pr = self.apm5.p(bit, 7, self.pr, 
+        ((self.cxt as u32) ^ (((self.cxt4 as u32) & 0xFFFFFF).wrapping_mul(123456791)) >> 18) as usize) 
+        + self.pr + 1 >> 1;  
+    }   
 }
 // -----------------------------------------------------------------
 
-// Encoder ---------------------------------------------------------
-#[allow(dead_code)]
+// Encoder ----------------------------------------------------------
 struct Encoder {
+    predictor:  Predictor,
     high:       u32,
     low:        u32,
-    predictor:  Predictor,
-    file_in:    BufReader<File>,
     file_out:   BufWriter<File>,
-    x:          u32,
-    compress:   bool,
 }
 impl Encoder {
-    fn new(file_in: BufReader<File>, file_out: BufWriter<File>, compress: bool) -> Encoder {
-        let mut encoder = Encoder {
-            high: 0xFFFFFFFF, 
-            low: 0, 
-            x: 0, 
+    fn new(file_out: BufWriter<File>) -> Encoder {
+        Encoder {
             predictor: Predictor::new(), 
-            file_in, file_out, compress
-        };
-        if !compress {
-            for _i in 0..4 {
-                let mut byte = [0; 1];
-                read(&mut encoder.file_in, &mut byte);
-                encoder.x = (encoder.x << 8) + byte[0] as u32;
-            }
+            high: 0xFFFFFFFF, 
+            low: 0,  
+            file_out,
         }
-        encoder
     }
     fn encode(&mut self, bit: i32) {
-        let mut p = self.predictor.p() as u32;
-        if p < 2048 { p += 1; } else {}
-        let mid: u32 = self.low + ((self.high - self.low) >> 12) * p + ((self.high - self.low & 0x0FFF) * p >> 12);
-        if bit == 1 {
-            self.high = mid;
-        } else {
-            self.low = mid + 1;
+        let p = self.predictor.p() as u32;
+        let mid: u32 = self.low + ((self.high - self.low) >> 12) * p 
+                       + ((self.high - self.low & 0x0FFF) * p >> 12);
+        if bit == 1 { 
+            self.high = mid;    
+        } 
+        else {        
+            self.low = mid + 1; 
         }
         self.predictor.update(bit);
 
         while ( (self.high ^ self.low) & 0xFF000000) == 0 {
-            write(&mut self.file_out, &self.high.to_le_bytes()[3..4]);
+            self.file_out.write_byte((self.high >> 24) as u8);
             self.high = (self.high << 8) + 255;
             self.low <<= 8;  
         }
     }
+    fn flush(&mut self) {
+        while ( (self.high ^ self.low) & 0xFF000000) == 0 {
+            self.file_out.write_byte((self.high >> 24) as u8);
+            self.high = (self.high << 8) + 255;
+            self.low <<= 8; 
+        }
+        self.file_out.write_byte((self.high >> 24) as u8);
+        self.file_out.flush_buffer();
+    }
+}
+// ------------------------------------------------------------------
+
+
+// Decoder ----------------------------------------------------------
+struct Decoder {
+    predictor:  Predictor,
+    high:       u32,
+    low:        u32,
+    x:          u32,
+    file_in:    BufReader<File>,   
+}
+impl Decoder {
+    fn new(file_in: BufReader<File>) -> Decoder {
+        let mut dec = Decoder {
+            predictor: Predictor::new(), 
+            high: 0xFFFFFFFF, 
+            low: 0, 
+            x: 0, 
+            file_in, 
+        };
+        for _ in 0..4 {
+            let mut byte = [0; 1];
+            dec.file_in.read_byte(&mut byte);
+            dec.x = (dec.x << 8) + byte[0] as u32;
+        }
+        dec
+    }
     fn decode(&mut self) -> i32 {
         let mut byte = [0; 1];
-        let mut p = self.predictor.p() as u32;
-        if p < 2048 { p += 1; } else {}
-        let mid: u32 = self.low + ((self.high - self.low) >> 12) * p + ((self.high - self.low & 0x0FFF) * p >> 12);
         let mut bit: i32 = 0;
+        let p = self.predictor.p() as u32;
+        let mid: u32 = self.low + ((self.high - self.low) >> 12) * p 
+                       + ((self.high - self.low & 0x0FFF) * p >> 12);
         if self.x <= mid {
             bit = 1;
             self.high = mid;
-        } else {
+        } 
+        else {
             self.low = mid + 1;
         }
         self.predictor.update(bit);
@@ -334,76 +392,59 @@ impl Encoder {
         while ( (self.high ^ self.low) & 0xFF000000) == 0 {
             self.high = (self.high << 8) + 255;
             self.low <<= 8;
-            read(&mut self.file_in, &mut byte); 
+            self.file_in.read_byte(&mut byte); 
             self.x = (self.x << 8) + byte[0] as u32; 
         }
         bit
     }
-    fn flush(&mut self) {
-        while ( (self.high ^ self.low) & 0xFF000000) == 0 {
-            write(&mut self.file_out, &self.high.to_le_bytes()[3..4]);
-            self.high = (self.high << 8) + 255;
-            self.low <<= 8; 
-        }
-        write(&mut self.file_out, &self.high.to_le_bytes()[3..4]);
-        self.file_out.flush().unwrap();
-    }
 }
-// -----------------------------------------------------------------
+// ------------------------------------------------------------------
 
 fn main() {
     let start_time = Instant::now();
     let args: Vec<String> = env::args().collect();
-    // main() buffers
-    let mut file_in  = BufReader::with_capacity(4096, File::open(&args[2]).unwrap());
-    let mut file_out = BufWriter::with_capacity(4096, File::create(&args[3]).unwrap());
-    // Encoder buffers
-    let e_file_in  =   BufReader::with_capacity(4096, File::open(&args[2]).unwrap());
-    let e_file_out =   BufWriter::with_capacity(4096, File::create(&args[3]).unwrap());
+    
+    let mut file_in  = new_input_file(4096, &args[2]);
+    let mut file_out = new_output_file(4096, &args[3]);
     match (&args[1]).as_str() {
         "c" => {  
-            let file_in_size = metadata(Path::new(&args[2])).unwrap().len();
-            let mut e = Encoder::new(e_file_in, e_file_out, true);
+            let mut enc = Encoder::new(file_out);
             let mut byte = [0; 1];
 
-            while read(&mut file_in, &mut byte) != 0 {
-                e.encode(1);
+            while file_in.read_byte(&mut byte) != 0 { 
+                enc.encode(1);
                 for i in (0..=7).rev() {
-                    e.encode(((byte[0] >> i) & 1).into());
+                    enc.encode(((byte[0] >> i) & 1).into());
                 } 
             }   
-            e.encode(0);
-            e.flush(); 
-            
-            let file_out_size = metadata(Path::new(&args[3])).unwrap().len();
-            println!("Finished Compressing.");   
-            println!("{} bytes -> {} bytes in {:.2?}", file_in_size, file_out_size, start_time.elapsed());    
+            enc.encode(0);
+            enc.flush(); 
+            println!("Finished Compressing.");     
         }
         "d" => {
-            let file_in_size = metadata(Path::new(&args[2])).unwrap().len();
-            let mut e = Encoder::new(e_file_in, e_file_out, false);
+            let mut dec = Decoder::new(file_in);
             
-            while e.decode() != 0 {   
-                let mut decoded_byte: i32 = 1;
-                while decoded_byte < 256 {
-                    decoded_byte += decoded_byte + e.decode();
+            while dec.decode() != 0 {   
+                let mut dec_byte: i32 = 1;
+                while dec_byte < 256 {
+                    dec_byte += dec_byte + dec.decode();
                 }
-                decoded_byte -= 256;
-                write(&mut file_out, &decoded_byte.to_le_bytes()[0..1]);
+                dec_byte -= 256;
+                file_out.write_byte((dec_byte & 0xFF) as u8);
             }
-            file_out.flush().unwrap();
-
-            let file_out_size = metadata(Path::new(&args[3])).unwrap().len();
-            println!("Finished Decompressing.");  
-            println!("{} bytes -> {} bytes in {:.2?}", file_in_size, file_out_size, start_time.elapsed());   
+            file_out.flush_buffer();
+            println!("Finished Decompressing.");   
         }
-        _ => {
-        println!("To compress: c input output");
-        println!("To decompress: d input output");
-        }
+        _ => {  
+            println!("Enter 'c input output' to compress");
+            println!("Enter 'd input output' to decompress"); 
+        } 
     } 
+    let file_in_size = metadata(Path::new(&args[2])).unwrap().len();
+    let file_out_size = metadata(Path::new(&args[3])).unwrap().len();
+    println!("{} bytes -> {} bytes in {:.2?}", 
+    file_in_size, file_out_size, start_time.elapsed());  
 }
-
 
 
 
