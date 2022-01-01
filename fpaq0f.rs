@@ -127,25 +127,21 @@ fn next_state(state: u8, bit: i32) -> u8 {
 }
 
 #[allow(overflowing_literals)]
-const HI_22_MSK: i32 = 0xFFFFFC00; // High 22 bit mask
+const PR_MSK: i32 = 0xFFFFFC00; // High 22 bit mask
 const LIMIT: usize = 127; // Controls rate of adaptation (higher = slower) (0..512)
 
 struct StateMap {
-    cxt:      usize,       // Context of last prediction
-    cxt_map:  Vec<u32>,    // Maps a context to a prediction and a count 
-    rec_t:    [i32; 512],  // Reciprocal table: controls the size of each adjustment to cxt_map
+    cxt:      usize,     
+    cxt_map:  Vec<u32>, // Maps a context to a prediction and a count 
+    rec_t:    Vec<u16>, // Reciprocal table: controls adjustment to cxt_map
 }
 impl StateMap {
     fn new(n: usize) -> StateMap {
-        let mut sm = StateMap { 
+        StateMap { 
             cxt:      0,
             cxt_map:  vec![1 << 31; n],
-            rec_t:    [0; 512],
-        };
-        for i in 0..512 { 
-            sm.rec_t[i] = (16_384 / (i + i + 3)) as i32; 
+            rec_t:    (0..512).map(|i| 16384/(i+i+3)).collect(),
         }
-        sm
     }
     fn p(&mut self, cxt: usize) -> i32 {                   
         self.cxt = cxt;
@@ -159,8 +155,10 @@ impl StateMap {
         if count < LIMIT { self.cxt_map[self.cxt] += 1; }
 
         // Update cxt_map based on prediction error
-        self.cxt_map[self.cxt] = self.cxt_map[self.cxt].wrapping_add(
-        ((((bit << 22) - pr) >> 3) * self.rec_t[count] & HI_22_MSK) as u32); 
+        let pr_err = ((bit << 22) - pr) >> 3; // Prediction error
+        let rec_v = self.rec_t[count] as i32; // Reciprocal value
+        self.cxt_map[self.cxt] = 
+        self.cxt_map[self.cxt].wrapping_add((pr_err * rec_v & PR_MSK) as u32); 
     }
 }
 // -----------------------------------------------------------------
