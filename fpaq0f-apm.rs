@@ -126,7 +126,7 @@ struct Apm {
     s:         Stretch,
     bin:       usize,    
     num_cxts:  usize, 
-    bin_map:   Vec<u16>, // maps each bin to a squashed value
+    bins:      Vec<u16>, // maps each bin to a squashed value
 }
 impl Apm {
     fn new(n: usize) -> Apm {
@@ -134,14 +134,14 @@ impl Apm {
             s:         Stretch::new(), 
             bin:       0, 
             num_cxts:  n,
-            bin_map:   vec![0; n * 33],
+            bins:      vec![0; n * 33],
         };
         for i in 0..apm.num_cxts {
             for j in 0usize..33 {
-                apm.bin_map[(i * 33) + j] = if i == 0 {
+                apm.bins[(i * 33) + j] = if i == 0 {
                     (squash(((j as i32) - 16) * 128) * 16) as u16
                 } else {
-                    apm.bin_map[j]
+                    apm.bins[j]
                 }
             }
         }
@@ -156,8 +156,8 @@ impl Apm {
         
         self.bin = (((pr + 2048) >> 7) + ((cxt as i32) * 33)) as usize;
 
-        let a = self.bin_map[self.bin] as i32;
-        let b = self.bin_map[self.bin+1] as i32;
+        let a = self.bins[self.bin] as i32;
+        let b = self.bins[self.bin+1] as i32;
         ((a * (128 - i_w)) + (b * i_w)) >> 11
     }
     fn update(&mut self, bit: i32, rate: i32) {
@@ -166,10 +166,10 @@ impl Apm {
         // Controls direction of update (bit = 1 - increase, bit = 0 - decrease)
         let g: i32 = (bit << 16) + (bit << rate) - bit - bit;
 
-        let a = self.bin_map[self.bin] as i32;
-        let b = self.bin_map[self.bin+1] as i32;
-        self.bin_map[self.bin]   = (a + ((g - a) >> rate)) as u16;
-        self.bin_map[self.bin+1] = (b + ((g - b) >> rate)) as u16;
+        let a = self.bins[self.bin] as i32;
+        let b = self.bins[self.bin+1] as i32;
+        self.bins[self.bin]   = (a + ((g - a) >> rate)) as u16;
+        self.bins[self.bin+1] = (b + ((g - b) >> rate)) as u16;
     }
 }
 // -----------------------------------------------------------------
