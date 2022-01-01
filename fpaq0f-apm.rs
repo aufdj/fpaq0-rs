@@ -296,10 +296,11 @@ impl Predictor {
         
         self.pr = self.apm3.p(bit, 7, self.pr, self.cxt | (self.cxt4 << 8) & 0xFF00);
         
-        self.pr = self.apm4.p(bit, 7, self.pr, self.cxt | (self.cxt4 & 0x1F00)) * 3 + self.pr + 2 >> 2;
+        self.pr = self.apm4.p(bit, 7, self.pr, self.cxt | (self.cxt4 & 0x1F00)) 
+        * 3 + self.pr + 2 >> 2;
 
-        self.pr = self.apm5.p(bit, 7, self.pr, 
-        ((self.cxt as u32) ^ (((self.cxt4 as u32) & 0xFFFFFF).wrapping_mul(123456791)) >> 18) as usize) 
+        let cxt4_hash = (((self.cxt4 as u32) & 0xFFFFFF).wrapping_mul(123456791)) >> 18;
+        self.pr = self.apm5.p(bit, 7, self.pr, ((self.cxt as u32) ^ cxt4_hash) as usize) 
         + self.pr + 1 >> 1;  
     }   
 }
