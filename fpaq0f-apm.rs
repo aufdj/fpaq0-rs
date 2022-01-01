@@ -126,7 +126,7 @@ struct Apm {
     s:         Stretch,
     bin:       usize,    
     num_cxts:  usize, 
-    bins:      Vec<u16>, // maps each bin to a squashed value
+    bins:      Vec<u16>, 
 }
 impl Apm {
     fn new(n: usize) -> Apm {
