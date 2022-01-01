@@ -214,27 +214,27 @@ const STATE_TABLE: [[u8; 2]; 256] = [
 [249,135],[250, 69],[ 80,251],[140,252],[249,135],[250, 69],[ 80,251], // 245
 [140,252],[  0,  0],[  0,  0],[  0,  0]];  // 252
 
+fn next_state(state: u8, bit: i32) -> u8 {
+    STATE_TABLE[state as usize][bit as usize]
+}
+
 #[allow(overflowing_literals)]
-const HI_23_MSK: i32 = 0xFFFFFE00;
+const PR_MSK: i32 = 0xFFFFFE00; // High 23 bit mask
 const LIMIT: usize = 127; // Controls rate of adaptation (higher = slower) (0..512)
 
 // StateMap --------------------------------------------------------
 struct StateMap {
     cxt:      usize,         
-    cxt_map:  Vec<u32>,   // Maps a context to a prediction and a count 
-    rec_t:    [i32; 512], // Controls adjustment to cxt_map
+    cxt_map:  Vec<u32>,  // Maps a context to a prediction and a count 
+    rec_t:    Vec<u16>,  // Controls adjustment to cxt_map
 }
 impl StateMap {
     fn new(n: usize) -> StateMap {
-        let mut sm = StateMap { 
+        StateMap { 
             cxt:      0,
             cxt_map:  vec![1 << 31; n],
-            rec_t:    [0; 512],
-        };
-        for i in 0..512 { 
-            sm.rec_t[i] = (32_768 / (i + i + 5)) as i32; 
+            rec_t:    (0..512).map(|i| 32768/(i+i+5)).collect(),
         }
-        sm
     }
     fn p(&mut self, bit: i32, cxt: usize) -> i32 {
         assert!(bit == 0 || bit == 1);
@@ -243,14 +243,16 @@ impl StateMap {
         (self.cxt_map[self.cxt] >> 20) as i32  
     }
     fn update(&mut self, bit: i32) {
-        let count = (self.cxt_map[self.cxt] & 511) as usize;  // Low 9 bits
-        let pr = (self.cxt_map[self.cxt] >> 14) as i32; // High 18 bits
+        let count = (self.cxt_map[self.cxt] & 511) as usize; // Low 9 bits
+        let pr = (self.cxt_map[self.cxt] >> 14) as i32;      // High 18 bits
 
         if count < LIMIT { self.cxt_map[self.cxt] += 1; }
 
-        // Updates cxt_map based on prediction error
-        self.cxt_map[self.cxt] = self.cxt_map[self.cxt].wrapping_add(
-        (((bit << 18) - pr) * self.rec_t[count] & HI_23_MSK) as u32); 
+        // Update cxt_map based on prediction error
+        let pr_err = (bit << 18) - pr; // Prediction error
+        let rec_v = self.rec_t[count] as i32; // Reciprocal value
+        self.cxt_map[self.cxt] = 
+        self.cxt_map[self.cxt].wrapping_add((pr_err * rec_v & PR_MSK) as u32); 
     }
 }
 // -----------------------------------------------------------------
@@ -279,7 +281,7 @@ impl Predictor {
     } 
     fn update(&mut self, bit: i32) {
         assert!(bit == 0 || bit == 1);
-        self.state[self.cxt] = STATE_TABLE[self.state[self.cxt] as usize][bit as usize];
+        self.state[self.cxt] = next_state(self.state[self.cxt], bit);
 
         self.cxt += self.cxt + bit as usize;
         if self.cxt >= 256 {
@@ -445,6 +447,10 @@ fn main() {
     println!("{} bytes -> {} bytes in {:.2?}", 
     file_in_size, file_out_size, start_time.elapsed());  
 }
+
+
+
+
 
 
 
