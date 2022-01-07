@@ -8,7 +8,7 @@ fpaq0-rs.exe c input output<br>
 To decompress:<br>
 fpaq0-rs.exe d input output<br>
 
-[Benchmarks](https://sheet.zoho.com/sheet/open/1pcxk88776ef2c512445c948bee21dcbbdba5?sheet=Sheet1&range=A1)
+[Benchmarks](https://sheet.zohopublic.com/sheet/published/i5jwtddd8d29b4ef94fce93450ee6ab9178e5)
 
 <hr>
 
@@ -20,7 +20,7 @@ fpaq0f-rs.exe c input output<br>
 To decompress:<br>
 fpaq0f-rs.exe d input output<br>
 
-[Benchmarks](https://sheet.zoho.com/sheet/open/1pcxk88776ef2c512445c948bee21dcbbdba5?sheet=Sheet1&range=A1)
+[Benchmarks](https://sheet.zohopublic.com/sheet/published/i5jwtddd8d29b4ef94fce93450ee6ab9178e5)
 
 <hr>
 
@@ -33,7 +33,7 @@ fpaq0p-rs.exe c input output<br>
 To decompress:<br>
 fpaq0p-rs.exe d input output<br>
 
-[Benchmarks](https://sheet.zoho.com/sheet/open/1pcxk88776ef2c512445c948bee21dcbbdba5?sheet=Sheet1&range=A1)
+[Benchmarks](https://sheet.zohopublic.com/sheet/published/i5jwtddd8d29b4ef94fce93450ee6ab9178e5)
 
 <hr>
 
@@ -45,4 +45,4 @@ fpaq0f-apm-rs.exe c input output<br>
 To decompress:<br>
 fpaq0f-apm-rs.exe d input output<br>
 
-[Benchmarks](https://sheet.zoho.com/sheet/open/1pcxk88776ef2c512445c948bee21dcbbdba5?sheet=Sheet1&range=A1)
+[Benchmarks](https://sheet.zohopublic.com/sheet/published/i5jwtddd8d29b4ef94fce93450ee6ab9178e5)
