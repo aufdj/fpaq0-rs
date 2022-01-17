@@ -1,4 +1,5 @@
 use std::{
+    iter::repeat,
     fs::{File, metadata},
     io::{Read, Write, BufReader, BufWriter, BufRead},
     env,
@@ -126,26 +127,21 @@ struct Apm {
     s:         Stretch,
     bin:       usize,    
     num_cxts:  usize, 
-    bins:      Vec<u16>, 
+    bin_map:   Vec<u16>, // maps each bin to a squashed value
 }
 impl Apm {
     fn new(n: usize) -> Apm {
-        let mut apm = Apm {  
-            s:         Stretch::new(), 
-            bin:       0, 
+        Apm {
+            s:         Stretch::new(),
+            bin:       0,
             num_cxts:  n,
-            bins:      vec![0; n * 33],
-        };
-        for i in 0..apm.num_cxts {
-            for j in 0usize..33 {
-                apm.bins[(i * 33) + j] = if i == 0 {
-                    (squash(((j as i32) - 16) * 128) * 16) as u16
-                } else {
-                    apm.bins[j]
-                }
-            }
+            bin_map:   repeat(
+                       (0..33).map(|i| (squash((i - 16) * 128) * 16) as u16)
+                       .collect::<Vec<u16>>().into_iter() )
+                       .take(n)
+                       .flatten()
+                       .collect::<Vec<u16>>(),
         }
-        apm
     }
     fn p(&mut self, bit: i32, rate: i32, mut pr: i32, cxt: usize) -> i32 {
         assert!(bit == 0 || bit == 1 && pr >= 0 && pr < 4096 && cxt < self.num_cxts);
@@ -156,8 +152,8 @@ impl Apm {
         
         self.bin = (((pr + 2048) >> 7) + ((cxt as i32) * 33)) as usize;
 
-        let a = self.bins[self.bin] as i32;
-        let b = self.bins[self.bin+1] as i32;
+        let a = self.bin_map[self.bin] as i32;
+        let b = self.bin_map[self.bin+1] as i32;
         ((a * (128 - i_w)) + (b * i_w)) >> 11
     }
     fn update(&mut self, bit: i32, rate: i32) {
@@ -166,10 +162,10 @@ impl Apm {
         // Controls direction of update (bit = 1 - increase, bit = 0 - decrease)
         let g: i32 = (bit << 16) + (bit << rate) - bit - bit;
 
-        let a = self.bins[self.bin] as i32;
-        let b = self.bins[self.bin+1] as i32;
-        self.bins[self.bin]   = (a + ((g - a) >> rate)) as u16;
-        self.bins[self.bin+1] = (b + ((g - b) >> rate)) as u16;
+        let a = self.bin_map[self.bin] as i32;
+        let b = self.bin_map[self.bin+1] as i32;
+        self.bin_map[self.bin]   = (a + ((g - a) >> rate)) as u16;
+        self.bin_map[self.bin+1] = (b + ((g - b) >> rate)) as u16;
     }
 }
 // -----------------------------------------------------------------
@@ -289,6 +285,7 @@ impl Predictor {
             self.cxt = 0;
         }
 
+        // SSE
         self.pr = self.sm.p(bit, self.state[self.cxt] as usize);
 
         self.pr = self.apm1.p(bit, 5, self.pr, self.cxt) +
@@ -296,12 +293,11 @@ impl Predictor {
         
         self.pr = self.apm3.p(bit, 7, self.pr, self.cxt | (self.cxt4 << 8) & 0xFF00);
         
-        self.pr = self.apm4.p(bit, 7, self.pr, self.cxt | (self.cxt4 & 0x1F00)) 
-        * 3 + self.pr + 2 >> 2;
+        self.pr = self.apm4.p(bit, 7, self.pr, self.cxt | (self.cxt4 & 0x1F00)) * 3 + self.pr + 2 >> 2;
 
         let cxt4_hash = (((self.cxt4 as u32) & 0xFFFFFF).wrapping_mul(123456791)) >> 18;
         self.pr = self.apm5.p(bit, 7, self.pr, ((self.cxt as u32) ^ cxt4_hash) as usize) 
-        + self.pr + 1 >> 1;  
+        + self.pr + 1 >> 1; 
     }   
 }
 // -----------------------------------------------------------------
@@ -448,11 +444,3 @@ fn main() {
     println!("{} bytes -> {} bytes in {:.2?}", 
     file_in_size, file_out_size, start_time.elapsed());  
 }
-
-
-
-
-
-
-
-
